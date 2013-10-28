@@ -385,15 +385,28 @@ def theta_entropy(pos, bins=24):
     --------
     >>> theta_entropy(t[t['probe'] == 3].set_index('frame'))
 
-    >>> S = t.set_index('frame')groupby('probe').agg(theta_entropy)
+    >>> S = t.set_index('frame').groupby('probe').agg(theta_entropy)
     """
 
     disp = pos - pos.shift(1)
     direction = np.arctan2(disp['y'], disp['x'])
-    print type(direction)
     bins = np.linspace(-np.pi, np.pi, bins + 1)
     Series(direction).hist(bins=bins)
     hist = np.histogram(direction.dropna(), bins)[0]
     hist = hist.astype('float64')/hist.sum()
     entropy = -np.sum(hist*np.log(hist))
     return entropy 
+
+def _entropy_func(x, bins):
+    hist = np.histogram(x, bins)[0]
+    hist = hist.astype('float64')/hist.sum()  # normalize probablity dist.
+    entropy = -np.sum(np.nan_to_num(hist*np.log(hist)))
+    return entropy
+
+def min_rolling_theta_entropy(pos, window=24, bins=24):
+    disp = pos - pos.shift(1)
+    direction = np.arctan2(disp['y'], disp['x'])
+    bins = np.linspace(-np.pi, np.pi, bins + 1)
+    f = lambda x: _entropy_func(x, bins)
+    return pd.rolling_apply(direction.dropna(), window, f).min()
+
