@@ -281,6 +281,62 @@ def vanhove(pos, lagtime=23, mpp=1, ensemble=False, bins=24):
     else:
         return vh
 
+def gyration_tensor(single_trajectory, pos_columns=['x', 'y'], 
+                    t_column='frame'):
+    """Compute the radius of gyration tensor for a trajectory.
+
+    Parameters
+    ----------
+    single_trajectory : DataFrame containing a single trajectory
+    pos_columns = ['x', 'y']
+    t_column = 'frame'
+
+
+    Reference
+    ---------
+    Rudnick, J, "The shapes of random walks." Science, 237 (4813). 384-389.
+    http://www.jstor.org/stable/1699557
+
+    Returns
+    -------
+    eignvalues
+    """
+    if len(pos_columns) != 2:
+        raise NotImplementedError("only implemented in 2D")
+    x, y = pos_columns
+    pos = single_trajectory[pos_columns]
+    cm = pos.mean()
+    Txx = ((pos[x] - cm[x])**2).mean()
+    Tyy = ((pos[y] - cm[y])**2).mean()
+    Txy = ((pos[y] - cm[y])*(pos[x] - cm[x])).mean()
+    Tyx = Txy
+    return np.linalg.eigvals([[Txx, Txy], [Tyx, Tyy]])
+
+def asphericity(single_trajectory, pos_columns=['x', 'y'],
+                    t_column='frame'):
+    """Compute the asphericity of a trajectory.
+
+    Parameters
+    ----------
+    single_trajectory : DataFrame containing a single trajectory
+    pos_columns = ['x', 'y']
+    t_column = 'frame'
+
+
+    Reference
+    ---------
+    Rudnick, J, "The shapes of random walks." Science, 237 (4813). 384-389.
+    http://www.jstor.org/stable/1699557
+
+    Returns
+    -------
+    float between 0 (spherical) and 1 (linear)
+    """
+    R1, R2 = gyration_tensor(single_trajectory, pos_columns, t_column)
+    R1_sq, R2_sq = R1**2, R2**2
+    A = (R1_sq - R2_sq)**2/(R1_sq + R2_sq)**2
+    return A
+
 def diagonal_size(single_trajectory, pos_columns=['x', 'y'], t_column='frame'):
     """Measure the diagonal size of a trajectory.
     
@@ -305,12 +361,6 @@ def diagonal_size(single_trajectory, pos_columns=['x', 'y'], t_column='frame'):
     
     pos = single_trajectory.set_index(t_column)[pos_columns]
     return np.sqrt(np.sum(pos.apply(np.ptp)**2))
-
-def is_localized(traj, threshold=0.4):
-    raise NotImplementedError, "I will rewrite this."
-
-def is_diffusive(traj, threshold=0.9):
-    raise NotImplementedError, "I will rewrite this."
 
 def relate_frames(t, frame1, frame2):
     a = t[t.frame == frame1]
