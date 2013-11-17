@@ -18,6 +18,7 @@
 
 from __future__ import division
 import logging
+import warnings
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
@@ -151,8 +152,10 @@ def emsd(traj, mpp, fps, max_lagtime=100, detail=False):
         return results['msd']
     return results
 
+ten_points_two_decades = np.logspace(0, 2, num=10).round()
 
-def tp_msd(traj, mpp, fps, a, lagframes=np.logspace(0, 2, num=10).round()):
+
+def tp_msd(traj, mpp, fps, a, lagframes=ten_points_two_decades):
     """Compute the two-point mean-squared displacement.
 
     Parameters
@@ -164,8 +167,6 @@ def tp_msd(traj, mpp, fps, a, lagframes=np.logspace(0, 2, num=10).round()):
     a : particle radius in microns
     lagframes : intervals of frames out to which MSD is computed
        Default 10 log-spaced intevals from 1 to 100
-    bins : bins of particle separation distance R
-       Default 10 evenly spaces bins
 
     Returns
     -------
@@ -175,23 +176,20 @@ def tp_msd(traj, mpp, fps, a, lagframes=np.logspace(0, 2, num=10).round()):
     -----
     Input units are pixels and frames. Output units are microns and seconds.
     """
-    D = tp_corr(traj, mpp, 1, lagframes, bins=False)
+    D = mpp*tp_corr(traj, lagframes, bins=False)
     result = 2/a*(D['R']*D['para']).groupby(level=0).mean()
     result.index = result.index.to_series().astype('float64')/fps
     return result
 
-ten_points_two_decades = np.logspace(0, 2, num=10).round()
 
-
-def tp_corr(traj, mpp, fps, lagframes=ten_points_two_decades, bins=10):
-    """Compute the two-point correlation function of probe displacement.
+def tp_corr(traj, lagframes=ten_points_two_decades, bins=False):
+    """Compute the diffusion tensor, i.e., the two-point correlation function of 
+    probe displacement.
 
     Parameters
     ----------
     traj : DataFrame of trajectories of multiple probes, including
         columns probe, frame, x, and y
-    mpp : microns per pixel
-    fps : frames per second
     lagframes : intervals of frames out to which MSD is computed
        Default 10 log-spaced intevals from 1 to 100
     bins : bins of particle separation distance R
@@ -199,56 +197,65 @@ def tp_corr(traj, mpp, fps, lagframes=ten_points_two_decades, bins=10):
 
     Returns
     -------
-    DataFrame([para, perp], index=[lagtime, R])
+    DataFrame([R, para, perp], index=[lagtime, R])
     para is D_rr; perp is D_tt.
 
     Notes
     -----
-    Input units are pixels and frames. Output units are microns and seconds.
+    Prepare trajectory data by subtracting drift and "eroding," meaning disarding
+    point in the vicinity of a gap or an end, because these points can be
+    spurrious.
     """
-    lagtimes = np.array(lagframes)/float(fps)
-    result = pd.concat([_tp_corr(traj, lf, bins) for lf in lagframes],
-                       keys=lagtimes, names=['lagtime'], ignore_index=True)
-    result *= mpp
+    result = pd.concat([_tp_corr(traj, lf, bins) for lf in lagframes])
     return result
 
 
-def _tp_corr(traj, lagframe=1, bins=False):
+def disp(a, step, dropna=False):
+    result = a.loc[a.index.values + step].values - a  # do not align
+    if not dropna:
+        return result
+    else:
+        return result.dropna()
+
+def _tp_corr(traj, lagframe, bins=False):
     """Compute the two-point correlation function at a single lagtime.
-    Called by tpmsd."""
+    
+    Returns
+    -------
+    DataFrame([R, para, perp], index=[lagframe, lagframe, ...]
+    """
     traj.set_index('frame', inplace=True, drop=False)  # to be sure
-    ids = []
-    disps = []
-    for pid, ptraj in traj.groupby('probe'):
-        ids.append(pid)
-        pos = ptraj[['x', 'y']]
-        # Reindex with consecutive frames, placing NaNs in the gaps.
-        pos = pos.reindex(np.arange(pos.index[0], 1 + pos.index[-1]))
-        pos[['dx', 'dy']] = pos.sub(pos.shift(lagframe))  # delta x, delta y
-        disps.append(pos)
-    dr = pd.concat(disps, keys=ids, names=['probe', 'dim'], axis=1)
-    probe_ids = traj.probe.unique()
+    _disp = lambda x: disp(x, lagframe)
+    probes = traj.groupby('probe')
+    probe_ids = traj['probe'].unique()
     probe_ids.sort()
     D = []
     for p1 in probe_ids:
+        r1 = probes.get_group(p1)[['x', 'y']]
+        dr1 = _disp(r1)
         for p2 in probe_ids[probe_ids > p1]:
-            R_x = dr[(p1, 'x')] - dr[(p2, 'x')]
-            R_y = dr[(p1, 'y')] - dr[(p2, 'y')]
-            R = np.sqrt(R_x**2 + R_y**2)
-            n_x, n_y = R_x/R, R_y/R
-            para = ((dr[(p1, 'dx')]*n_x + dr[(p1, 'dy')]*n_y) *
-                (dr[(p2, 'dx')]*n_x + dr[(p2, 'dy')]*n_y))
-            p_x, p_y = n_y, -n_x
-            perp = ((dr[(p1, 'dx')]*p_x + dr[(p1, 'dy')]*p_y) *
-                (dr[(p2, 'dx')]*p_x + dr[(p2, 'dy')]*p_y))
+            r2 = probes.get_group(p2)[['x', 'y']]
+            dr2 = _disp(r2)
+            r = r2 - r1  # r is a vector   
+            R = np.sqrt(np.sum(r**2, axis=1))  # R = |r|
+            n = r.div(R, 0)  # n is a unit vector connecting p1 and p2
+            para = np.sum(dr1 * n, 1) * np.sum(dr2 * n, 1)
+            p = DataFrame({'x': n['y'], 'y': -n['x']})  # p is perp. to n
+            perp = np.sum(dr1 * p, 1) * np.sum(dr2 * p, 1)
             D.append(DataFrame({'R': R, 'para': para, 'perp': perp}).dropna())
-    D = pd.concat(D)
+    if max(map(len, D)) == 0:
+        warnings.warn("No data for lagtime interval of %d frames" % lagframe,
+                      UserWarning)
+        return None
+    D = pd.concat([D_ for D_ in D if len(D_) > 0], ignore_index=True)
+    D.index = lagframe*np.ones_like(D.index)
     if not bins:
         return D
-    _, bins = np.histogram(D['R'], bins=bins)
-    grouper = np.digitize(D['R'], bins)
-    binned = D.groupby(grouper).mean()
-    return binned.set_index('R')
+    else:
+        _, bins = np.histogram(D['R'], bins=bins)
+        grouper = np.digitize(D['R'], bins)
+        D_binned = D.groupby(grouper).mean()
+        return D_binned
 
 
 def compute_drift(traj, smoothing=0):
