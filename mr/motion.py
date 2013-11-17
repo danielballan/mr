@@ -21,12 +21,12 @@ import logging
 import numpy as np
 import pandas as pd
 from pandas import DataFrame, Series
-from scipy import interpolate
 
 logger = logging.getLogger(__name__)
 
+
 def msd(traj, mpp, fps, max_lagtime=100, detail=False):
-    """Compute the mean displacement and mean squared displacement of one 
+    """Compute the mean displacement and mean squared displacement of one
     trajectory over a range of time intervals.
 
     Parameters
@@ -41,7 +41,7 @@ def msd(traj, mpp, fps, max_lagtime=100, detail=False):
     Returns
     -------
     DataFrame([<x>, <y>, <x^2>, <y^2>, msd], index=t)
-    
+
     If detail is True, the DataFrame also contains a column N,
     the estimated number of statistically independent measurements
     that comprise the result at each lagtime.
@@ -56,28 +56,29 @@ def msd(traj, mpp, fps, max_lagtime=100, detail=False):
     """
     pos = traj.set_index('frame')[['x', 'y']]
     t = traj['frame']
-    # Reindex with consecutive frames, placing NaNs in the gaps. 
+    # Reindex with consecutive frames, placing NaNs in the gaps.
     pos = pos.reindex(np.arange(pos.index[0], 1 + pos.index[-1]))
-    max_lagtime = min(max_lagtime, len(t)) # checking to be safe
-    lagtimes = 1 + np.arange(max_lagtime) 
+    max_lagtime = min(max_lagtime, len(t))  # checking to be safe
+    lagtimes = 1 + np.arange(max_lagtime)
     disp = pd.concat([pos.sub(pos.shift(lt)) for lt in lagtimes],
                      keys=lagtimes, names=['lagt', 'frames'])
     results = mpp*disp.mean(level=0)
     results.columns = ['<x>', '<y>']
     results[['<x^2>', '<y^2>']] = mpp**2*(disp**2).mean(level=0)
-    results['msd'] = mpp**2*(disp**2).mean(level=0).sum(1) # <r^2>
+    results['msd'] = mpp**2*(disp**2).mean(level=0).sum(1)  # <r^2>
     # Estimated statistically independent measurements = 2N/t
     if detail:
         results['N'] = 2*disp.icol(0).count(level=0).div(Series(lagtimes))
     results['lagt'] = results.index.values/fps
     return results[:-1]
 
+
 def imsd(traj, mpp, fps, max_lagtime=100, statistic='msd'):
     """Compute the mean squared displacements of probes individually.
-    
+
     Parameters
     ----------
-    traj : DataFrame of trajectories of multiple probes, including 
+    traj : DataFrame of trajectories of multiple probes, including
         columns probe, frame, x, and y
     mpp : microns per pixel
     fps : frames per second
@@ -90,7 +91,7 @@ def imsd(traj, mpp, fps, max_lagtime=100, statistic='msd'):
     Returns
     -------
     DataFrame([Probe 1 msd, Probe 2 msd, ...], index=t)
-    
+
     Notes
     -----
     Input units are pixels and frames. Output units are microns and seconds.
@@ -110,12 +111,13 @@ def imsd(traj, mpp, fps, max_lagtime=100, statistic='msd'):
     results.index.name = 'lag time [s]'
     return results
 
+
 def emsd(traj, mpp, fps, max_lagtime=100, detail=False):
-    """Compute the mean squared displacements of an ensemble of probes. 
-    
+    """Compute the mean squared displacements of an ensemble of probes.
+
     Parameters
     ----------
-    traj : DataFrame of trajectories of multiple probes, including 
+    traj : DataFrame of trajectories of multiple probes, including
         columns probe, frame, x, and y
     mpp : microns per pixel
     fps : frames per second
@@ -128,7 +130,7 @@ def emsd(traj, mpp, fps, max_lagtime=100, detail=False):
     -------
     Series[msd, index=t] or, if detail=True,
     DataFrame([<x>, <y>, <x^2>, <y^2>, msd], index=t)
-    
+
     Notes
     -----
     Input units are pixels and frames. Output units are microns and seconds.
@@ -139,22 +141,23 @@ def emsd(traj, mpp, fps, max_lagtime=100, detail=False):
         msds.append(msd(ptraj, mpp, fps, max_lagtime, True))
         ids.append(pid)
     msds = pd.concat(msds, keys=ids, names=['probe', 'frame'])
-    results = msds.mul(msds['N'], axis=0).mean(level=1) # weighted average
-    results = results.div(msds['N'].mean(level=1), axis=0) # weights normalized
+    results = msds.mul(msds['N'], axis=0).mean(level=1)  # weighted average
+    results = results.div(msds['N'].mean(level=1), axis=0)  # normalized
     # Above, lagt is lumped in with the rest for simplicity and speed.
     # Here, rebuild it from the frame index.
     results.set_index('lagt', inplace=True)
     results.index.name = 'lag time [s]'
     if not detail:
-        return results['msd'] 
+        return results['msd']
     return results
+
 
 def tp_msd(traj, mpp, fps, a, lagframes=np.logspace(0, 2, num=10).round()):
     """Compute the two-point mean-squared displacement.
-    
+
     Parameters
     ----------
-    traj : DataFrame of trajectories of multiple probes, including 
+    traj : DataFrame of trajectories of multiple probes, including
         columns probe, frame, x, and y
     mpp : microns per pixel
     fps : frames per second
@@ -167,23 +170,25 @@ def tp_msd(traj, mpp, fps, a, lagframes=np.logspace(0, 2, num=10).round()):
     Returns
     -------
     Series(msd, index=lagtime)
-    
+
     Notes
     -----
     Input units are pixels and frames. Output units are microns and seconds.
     """
     D = tp_corr(traj, mpp, 1, lagframes, bins=False)
-    result =  2/a*(D['R']*D['para']).groupby(level=0).mean()
+    result = 2/a*(D['R']*D['para']).groupby(level=0).mean()
     result.index = result.index.to_series().astype('float64')/fps
     return result
-    
-    
-def tp_corr(traj, mpp, fps, lagframes=np.logspace(0, 2, num=10).round(), bins=10):
+
+ten_points_two_decades = np.logspace(0, 2, num=10).round()
+
+
+def tp_corr(traj, mpp, fps, lagframes=ten_points_two_decades, bins=10):
     """Compute the two-point correlation function of probe displacement.
-    
+
     Parameters
     ----------
-    traj : DataFrame of trajectories of multiple probes, including 
+    traj : DataFrame of trajectories of multiple probes, including
         columns probe, frame, x, and y
     mpp : microns per pixel
     fps : frames per second
@@ -196,28 +201,30 @@ def tp_corr(traj, mpp, fps, lagframes=np.logspace(0, 2, num=10).round(), bins=10
     -------
     DataFrame([para, perp], index=[lagtime, R])
     para is D_rr; perp is D_tt.
-    
+
     Notes
     -----
     Input units are pixels and frames. Output units are microns and seconds.
     """
     lagtimes = np.array(lagframes)/float(fps)
-    result = pd.concat([_tp_corr(traj, lf, bins) for lf in lagframes], 
+    result = pd.concat([_tp_corr(traj, lf, bins) for lf in lagframes],
                        keys=lagtimes, names=['lagtime'], ignore_index=True)
     result *= mpp
     return result
 
+
 def _tp_corr(traj, lagframe=1, bins=False):
-    "Compute the two-point correlation function at a single lagtime. Called by tpmsd."
-    traj.set_index('frame', inplace=True, drop=False) # to be sure
+    """Compute the two-point correlation function at a single lagtime.
+    Called by tpmsd."""
+    traj.set_index('frame', inplace=True, drop=False)  # to be sure
     ids = []
     disps = []
     for pid, ptraj in traj.groupby('probe'):
         ids.append(pid)
         pos = ptraj[['x', 'y']]
-        # Reindex with consecutive frames, placing NaNs in the gaps. 
+        # Reindex with consecutive frames, placing NaNs in the gaps.
         pos = pos.reindex(np.arange(pos.index[0], 1 + pos.index[-1]))
-        pos[['dx', 'dy']] = pos.sub(pos.shift(lagframe)) # delta x, delta y
+        pos[['dx', 'dy']] = pos.sub(pos.shift(lagframe))  # delta x, delta y
         disps.append(pos)
     dr = pd.concat(disps, keys=ids, names=['probe', 'dim'], axis=1)
     probe_ids = traj.probe.unique()
@@ -225,12 +232,15 @@ def _tp_corr(traj, lagframe=1, bins=False):
     D = []
     for p1 in probe_ids:
         for p2 in probe_ids[probe_ids > p1]:
-            R_x, R_y = dr[(p1, 'x')] - dr[(p2, 'x')], dr[(p1, 'y')] - dr[(p2, 'y')]
+            R_x = dr[(p1, 'x')] - dr[(p2, 'x')]
+            R_y = dr[(p1, 'y')] - dr[(p2, 'y')]
             R = np.sqrt(R_x**2 + R_y**2)
             n_x, n_y = R_x/R, R_y/R
-            para = (dr[(p1, 'dx')]*n_x + dr[(p1, 'dy')]*n_y)*(dr[(p2, 'dx')]*n_x + dr[(p2, 'dy')]*n_y)
+            para = ((dr[(p1, 'dx')]*n_x + dr[(p1, 'dy')]*n_y) *
+                (dr[(p2, 'dx')]*n_x + dr[(p2, 'dy')]*n_y))
             p_x, p_y = n_y, -n_x
-            perp = (dr[(p1, 'dx')]*p_x + dr[(p1, 'dy')]*p_y)*(dr[(p2, 'dx')]*p_x + dr[(p2, 'dy')]*p_y)
+            perp = ((dr[(p1, 'dx')]*p_x + dr[(p1, 'dy')]*p_y) *
+                (dr[(p2, 'dx')]*p_x + dr[(p2, 'dy')]*p_y))
             D.append(DataFrame({'R': R, 'para': para, 'perp': perp}).dropna())
     D = pd.concat(D)
     if not bins:
@@ -240,6 +250,7 @@ def _tp_corr(traj, lagframe=1, bins=False):
     binned = D.groupby(grouper).mean()
     return binned.set_index('R')
 
+
 def compute_drift(traj, smoothing=0):
     """Return the ensemble drift, x(t).
 
@@ -247,12 +258,12 @@ def compute_drift(traj, smoothing=0):
     ----------
     traj : DataFrame of trajectories, including columns x, y, frame, and probe
     smoothing : integer
-        Smooth the drift using a forward-looking rolling mean over 
+        Smooth the drift using a forward-looking rolling mean over
         this many frames.
 
     Returns
     -------
-    drift : DataFrame([x, y], index=frame)    
+    drift : DataFrame([x, y], index=frame)
 
     Examples
     --------
@@ -266,7 +277,7 @@ def compute_drift(traj, smoothing=0):
     # Probe by probe, take the difference between frames.
     delta = pd.concat([t.set_index('frame', drop=False).diff()
                        for p, t in traj.groupby('probe')])
-    # Keep only deltas between frames that are consecutive. 
+    # Keep only deltas between frames that are consecutive.
     delta = delta[delta['frame'] == 1]
     # Restore the original frame column (replacing delta frame).
     delta['frame'] = delta.index
@@ -276,13 +287,14 @@ def compute_drift(traj, smoothing=0):
     x = dx.cumsum(0)[['x', 'y']]
     return x
 
+
 def subtract_drift(traj, drift=None):
-    """Return a copy of probe trajectores with the overall drift subtracted out.
-    
+    """Return a copy of probe trajectores with the overall drift subtracted out
+
     Parameters
     ----------
     traj : DataFrame of trajectories, including columns x, y, and frame
-    drift : optional DataFrame([x, y], index=frame) like output of 
+    drift : optional DataFrame([x, y], index=frame) like output of
          compute_drift(). If no drift is passed, drift is computed from traj.
 
     Returns
@@ -290,9 +302,10 @@ def subtract_drift(traj, drift=None):
     traj : a copy, having modified columns x and y
     """
 
-    if drift is None: 
+    if drift is None:
         drift = compute_drift(traj)
     return traj.set_index('frame', drop=False).sub(drift, fill_value=0)
+
 
 def is_typical(msds, frame=23, lower=0.1, upper=0.9):
     """Examine individual probe MSDs, distinguishing outliers from those
@@ -308,8 +321,7 @@ def is_typical(msds, frame=23, lower=0.1, upper=0.9):
         Probes with MSD up to this quantile are deemed outliers.
     upper : float between 0 and 1, default 0.9
         Probes with MSD above this quantile are deemed outliers.
-        
-    
+
     Returns
     -------
     Series of boolean values, indexed by probe number
@@ -326,6 +338,7 @@ def is_typical(msds, frame=23, lower=0.1, upper=0.9):
     a, b = msds.ix[frame].quantile(lower), msds.ix[frame].quantile(upper)
     return (msds.ix[frame] > a) & (msds.ix[frame] < b)
 
+
 def vanhove(pos, lagtime=23, mpp=1, ensemble=False, bins=24):
     """Compute the van Hove correlation function at given lagtime (frame span).
 
@@ -333,8 +346,8 @@ def vanhove(pos, lagtime=23, mpp=1, ensemble=False, bins=24):
     ----------
     pos : DataFrame of x or (or!) y positions, one column per probe, indexed
         by frame
-    lagtime : integer interval of frames 
-        Compare the correlation function at this lagtime. Default is 23 
+    lagtime : integer interval of frames
+        Compare the correlation function at this lagtime. Default is 23
         (1 second at 24 fps).
     mpp : microns per pixel, DEFAULT TO 1 because it is usually fine to use
         pixels for this analysis
@@ -345,8 +358,8 @@ def vanhove(pos, lagtime=23, mpp=1, ensemble=False, bins=24):
 
     Returns
     -------
-    vh : If ensemble=True, a DataFrame with each probe's van Hove correlation 
-        function, indexed by displacement. If ensemble=False, a Series with 
+    vh : If ensemble=True, a DataFrame with each probe's van Hove correlation
+        function, indexed by displacement. If ensemble=False, a Series with
         the van Hove correlation function of the whole ensemble.
 
     Example
@@ -354,27 +367,28 @@ def vanhove(pos, lagtime=23, mpp=1, ensemble=False, bins=24):
     pos = traj.set_index(['frame', 'probe'])['x'].unstack() # probes as columns
     vh = vanhove(pos)
     """
-    # Reindex with consecutive frames, placing NaNs in the gaps. 
+    # Reindex with consecutive frames, placing NaNs in the gaps.
     pos = pos.reindex(np.arange(pos.index[0], 1 + pos.index[-1]))
-    assert lagtime <= pos.index.values.max(), \
-        "There is a no data out to frame %s. " % frame
+    if lagtime > pos.index.values.max():
+        raise ValueError("There is a no data out to frame %s." % lagtime)
     disp = mpp*pos.sub(pos.shift(lagtime))
     # Let np.histogram choose the best bins for all the data together.
     values = disp.values.flatten()
     values = values[np.isfinite(values)]
     global_bins = np.histogram(values, bins=bins)[1]
-    # Use those bins to histogram each column by itself. 
+    # Use those bins to histogram each column by itself.
     vh = disp.apply(
-        lambda x: Series(np.histogram(x, bins=global_bins, density=True)[0])) 
+        lambda x: Series(np.histogram(x, bins=global_bins, density=True)[0]))
     vh.index = global_bins[:-1]
     if ensemble:
         return vh.sum(1)/len(vh.columns)
     else:
         return vh
 
+
 def diagonal_size(single_trajectory, pos_columns=['x', 'y'], t_column='frame'):
     """Measure the diagonal size of a trajectory.
-    
+
     Parameters
     ----------
     single_trajectory : DataFrame containing a single trajectory
@@ -387,32 +401,26 @@ def diagonal_size(single_trajectory, pos_columns=['x', 'y'], t_column='frame'):
 
     Example
     -------
-    >>> diagonal_size(single_trajectory)
-
     >>> many_trajectories.groupby('probe').agg(mr.diagonal_size)
-
-    >>> many_trajectories.groupby('probe').filter(lambda x: mr.diagonal_size(x) > 5)
+    >>> criterion = lambda x: mr.diagonal_size(x) > 5
+    >>> many_trajectories.groupby('probe').filter(criterion)
     """
-    
+
     pos = single_trajectory.set_index(t_column)[pos_columns]
     return np.sqrt(np.sum(pos.apply(np.ptp)**2))
 
-def is_localized(traj, threshold=0.4):
-    raise NotImplementedError, "I will rewrite this."
-
-def is_diffusive(traj, threshold=0.9):
-    raise NotImplementedError, "I will rewrite this."
 
 def relate_frames(t, frame1, frame2):
     a = t[t.frame == frame1]
     b = t[t.frame == frame2]
     j = a.set_index('probe')[['x', 'y']].join(
-         b.set_index('probe')[['x', 'y']], rsuffix='_b')
+        b.set_index('probe')[['x', 'y']], rsuffix='_b')
     j['dx'] = j.x_b - j.x
     j['dy'] = j.y_b - j.y
     j['dr'] = np.sqrt(j['dx']**2 + j['dy']**2)
-    j['direction']  = np.arctan2(j.dy, j.dx)
+    j['direction'] = np.arctan2(j.dy, j.dx)
     return j
+
 
 def direction_corr(t, frame1, frame2):
     """Compute the cosine between every pair of probes' displacements.
@@ -434,10 +442,11 @@ def direction_corr(t, frame1, frame2):
     upper_triangle = np.triu_indices_from(r, 1)
     result = DataFrame({'r': r[upper_triangle],
                         'cos': cosine[upper_triangle]})
-    return result 
+    return result
+
 
 def velocity_corr(t, frame1, frame2):
-    """Compute the velocity correlation between 
+    """Compute the velocity correlation between
     every pair of probes' displacements.
 
     Parameters
@@ -458,7 +467,8 @@ def velocity_corr(t, frame1, frame2):
     upper_triangle = np.triu_indices_from(r, 1)
     result = DataFrame({'r': r[upper_triangle],
                         'dot_product': dot_product[upper_triangle]})
-    return result 
+    return result
+
 
 def theta_entropy(pos, bins=24, plot=True):
     """Plot the distrbution of directions and return its Shannon entropy.
@@ -485,7 +495,8 @@ def theta_entropy(pos, bins=24, plot=True):
     bins = np.linspace(-np.pi, np.pi, bins + 1)
     if plot:
         Series(direction).hist(bins=bins)
-    return shannon_entropy(direction.dropna(), bins) 
+    return shannon_entropy(direction.dropna(), bins)
+
 
 def shannon_entropy(x, bins):
     """Compute the Shannon entropy of the distribution of x."""
@@ -493,6 +504,7 @@ def shannon_entropy(x, bins):
     hist = hist.astype('float64')/hist.sum()  # normalize probablity dist.
     entropy = -np.sum(np.nan_to_num(hist*np.log(hist)))
     return entropy
+
 
 def min_rolling_theta_entropy(pos, window=24, bins=24):
     """Compute the minimum Shannon entropy in any window.
@@ -520,4 +532,3 @@ def min_rolling_theta_entropy(pos, window=24, bins=24):
     bins = np.linspace(-np.pi, np.pi, bins + 1)
     f = lambda x: shannon_entropy(x, bins)
     return pd.rolling_apply(direction.dropna(), window, f).min()
-
