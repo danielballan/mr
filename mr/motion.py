@@ -97,6 +97,7 @@ def imsd(traj, mpp, fps, max_lagtime=100, statistic='msd'):
     -----
     Input units are pixels and frames. Output units are microns and seconds.
     """
+    _verify_user_is_not_boneheaded(mpp, fps)
     ids = []
     msds = []
     # Note: Index is set by msd, so we don't need to worry
@@ -136,6 +137,7 @@ def emsd(traj, mpp, fps, max_lagtime=100, detail=False):
     -----
     Input units are pixels and frames. Output units are microns and seconds.
     """
+    _verify_user_is_not_boneheaded(mpp, fps)
     ids = []
     msds = []
     for pid, ptraj in traj.reset_index(drop=True).groupby('probe'):
@@ -155,7 +157,7 @@ def emsd(traj, mpp, fps, max_lagtime=100, detail=False):
 ten_points_two_decades = np.logspace(0, 2, num=10).round()
 
 
-def tp_msd(traj, mpp, fps, a, lagframes=ten_points_two_decades):
+def tp_msd(traj, mpp, fps, a, lagframes=ten_points_two_decades, bins=False):
     """Compute the two-point mean-squared displacement.
 
     Parameters
@@ -167,6 +169,7 @@ def tp_msd(traj, mpp, fps, a, lagframes=ten_points_two_decades):
     a : particle radius in microns
     lagframes : intervals of frames out to which MSD is computed
        Default 10 log-spaced intevals from 1 to 100
+    bins : bin by particle separation distance R, default False
 
     Returns
     -------
@@ -176,15 +179,17 @@ def tp_msd(traj, mpp, fps, a, lagframes=ten_points_two_decades):
     -----
     Input units are pixels and frames. Output units are microns and seconds.
     """
-    D = mpp*tp_corr(traj, lagframes, bins=False)
-    result = 2/a*(D['R']*D['para']).groupby(level=0).mean()
+    _verify_user_is_not_boneheaded(mpp, fps)
+    D = tp_corr(traj, lagframes, bins=False, _reduce=True)
+    D*= mpp
+    result = 2/a*D
     result.index = result.index.to_series().astype('float64')/fps
     return result
 
 
-def tp_corr(traj, lagframes=ten_points_two_decades, bins=False):
-    """Compute the diffusion tensor, i.e., the two-point correlation function of 
-    probe displacement.
+def tp_corr(traj, lagframes=ten_points_two_decades, bins=False, _reduce=False):
+    """Compute the diffusion tensor, i.e., the two-point correlation function
+    of probe displacement.
 
     Parameters
     ----------
@@ -192,8 +197,7 @@ def tp_corr(traj, lagframes=ten_points_two_decades, bins=False):
         columns probe, frame, x, and y
     lagframes : intervals of frames out to which MSD is computed
        Default 10 log-spaced intevals from 1 to 100
-    bins : bins of particle separation distance R
-       Default 10 evenly spaces bins
+    bins : bin by particle separation distance R, default False
 
     Returns
     -------
@@ -202,11 +206,11 @@ def tp_corr(traj, lagframes=ten_points_two_decades, bins=False):
 
     Notes
     -----
-    Prepare trajectory data by subtracting drift and "eroding," meaning disarding
-    point in the vicinity of a gap or an end, because these points can be
-    spurrious.
+    Prepare trajectory data by subtracting drift and "eroding," meaning 
+    disarding point in the vicinity of a gap or an end, because these points
+    can be spurrious.
     """
-    result = pd.concat([_tp_corr(traj, lf, bins) for lf in lagframes])
+    result = pd.concat([_tp_corr(traj, lf, bins, _reduce) for lf in lagframes])
     return result
 
 
@@ -217,9 +221,10 @@ def disp(a, step, dropna=False):
     else:
         return result.dropna()
 
-def _tp_corr(traj, lagframe, bins=False):
+
+def _tp_corr(traj, lagframe, bins=False, _reduce=False):
     """Compute the two-point correlation function at a single lagtime.
-    
+
     Returns
     -------
     DataFrame([R, para, perp], index=[lagframe, lagframe, ...]
@@ -230,13 +235,16 @@ def _tp_corr(traj, lagframe, bins=False):
     probe_ids = traj['probe'].unique()
     probe_ids.sort()
     D = []
+    count = len(probe_ids)
+    logger.info("%d-frame lag, %d probes, %d permutations" %
+                (lagframe, count, count*(count - 1)//2))
     for p1 in probe_ids:
         r1 = probes.get_group(p1)[['x', 'y']]
         dr1 = _disp(r1)
         for p2 in probe_ids[probe_ids > p1]:
             r2 = probes.get_group(p2)[['x', 'y']]
             dr2 = _disp(r2)
-            r = r2 - r1  # r is a vector   
+            r = r2 - r1  # r is a vector
             R = np.sqrt(np.sum(r**2, axis=1))  # R = |r|
             n = r.div(R, 0)  # n is a unit vector connecting p1 and p2
             para = np.sum(dr1 * n, 1) * np.sum(dr2 * n, 1)
@@ -248,14 +256,18 @@ def _tp_corr(traj, lagframe, bins=False):
                       UserWarning)
         return None
     D = pd.concat([D_ for D_ in D if len(D_) > 0], ignore_index=True)
-    D.index = lagframe*np.ones_like(D.index)
-    if not bins:
-        return D
-    else:
+    if bins:
+        # Reduce data spatially.
         _, bins = np.histogram(D['R'], bins=bins)
         grouper = np.digitize(D['R'], bins)
-        D_binned = D.groupby(grouper).mean()
-        return D_binned
+        D = D.groupby(grouper).mean()
+    D.index = lagframe*np.ones_like(D.index)
+    if _reduce:
+        # Reduce all data into a single point for tp_msd.
+        # The result is a scalar, which we rebox as a DataFrame
+        # for consistency. (It will be passed to pd.concat.)
+        D = DataFrame([D[['R', 'para']].prod(1).mean(0)], index=[lagframe])
+    return D
 
 
 def compute_drift(traj, smoothing=0):
@@ -493,8 +505,6 @@ def theta_entropy(pos, bins=24, plot=True):
     Examples
     --------
     >>> theta_entropy(t[t['probe'] == 3].set_index('frame'))
-
-    >>> S = t.set_index('frame').groupby('probe').apply(mr.theta_entropy)
     """
 
     disp = pos - pos.shift(1)
@@ -539,3 +549,12 @@ def min_rolling_theta_entropy(pos, window=24, bins=24):
     bins = np.linspace(-np.pi, np.pi, bins + 1)
     f = lambda x: shannon_entropy(x, bins)
     return pd.rolling_apply(direction.dropna(), window, f).min()
+
+
+def _verify_user_is_not_boneheaded(mpp, fps):
+    if not mpp > 0:
+        raise ValueError("microns per pixel (mpp) should be larger than 0." +
+                         " Did you accidentally do integer division?")
+    if not fps > 0:
+        raise ValueError("frames per second (fps) should be larger than 0." +
+                         " Did you accidentally do integer division?")
