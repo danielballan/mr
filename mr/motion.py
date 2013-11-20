@@ -230,32 +230,59 @@ def _tp_corr(traj, lagframe, bins=False, _reduce=False):
     DataFrame([R, para, perp], index=[lagframe, lagframe, ...]
     """
     traj.set_index('frame', inplace=True, drop=False)  # to be sure
+    dr_cache = {}
     _disp = lambda x: disp(x, lagframe)
-    probes = traj.groupby('probe')
+    grouped = traj[['x', 'y']].groupby(traj['probe'])
+    # PERF: Copy data out of groups to avoid repeated index lookup.
+    try:
+        probes = {k: v for k, v in grouped}
+    except MemoryError:
+        probes = grouped
+        grouped.get = grouped.get_group  # monkey patch
     probe_ids = traj['probe'].unique()
     probe_ids.sort()
     D = []
+    dr_cache = {}
     count = len(probe_ids)
     logger.info("%d-frame lag, %d probes, %d permutations" %
                 (lagframe, count, count*(count - 1)//2))
+    # PERF: Below, where I reindex, I am manually aligning the data
+    # rather than allowing pandas for do it automatically, repeatedly
+    # for each operation. I get a substantial speed boost.
     for p1 in probe_ids:
-        r1 = probes.get_group(p1)[['x', 'y']]
-        dr1 = _disp(r1)
+        r1 = probes.get(p1)
+        if p1 in dr_cache:
+            dr1 = dr_cache[p1]
+        else:
+            dr1 = _disp(r1).dropna()
+            dr_cache[p1] = dr1
+        index = dr1.index
+        dr1 = dr1.values
+        r1 = r1.reindex(index).values
         for p2 in probe_ids[probe_ids > p1]:
-            r2 = probes.get_group(p2)[['x', 'y']]
-            dr2 = _disp(r2)
-            r = r2 - r1  # r is a vector
-            R = np.sqrt(np.sum(r**2, axis=1))  # R = |r|
-            n = r.div(R, 0)  # n is a unit vector connecting p1 and p2
+            r2 = probes.get(p2)
+            if p2 in dr_cache:
+                dr2 = dr_cache[p2]
+            else:
+                dr2 = _disp(r2)
+                dr_cache[p2] = dr2
+            dr2 = dr2.reindex(index).values
+            r = r2.reindex(index).values - r1  # vector
+            R = np.sqrt(np.sum(r**2, axis=1))
+            n = r/R.reshape(-1, 1)  # unit vector
             para = np.sum(dr1 * n, 1) * np.sum(dr2 * n, 1)
-            p = DataFrame({'x': n['y'], 'y': -n['x']})  # p is perp. to n
+            p = n[:, ::-1] * [-1, 1]  # p is perpendicular to n
             perp = np.sum(dr1 * p, 1) * np.sum(dr2 * p, 1)
-            D.append(DataFrame({'R': R, 'para': para, 'perp': perp}).dropna())
-    if max(map(len, D)) == 0:
+            # PERF: Assemble a DataFrame-like array, but don't call the
+            # DataFrame constructor until outside the loop.
+            df_shaped_array = np.column_stack([R, para, perp])
+            D.append(df_shaped_array)
+        del dr_cache[p1]
+    D = DataFrame(np.vstack(D), columns=['R', 'para', 'perp']).dropna()
+    if len(D) == 0:
         warnings.warn("No data for lagtime interval of %d frames" % lagframe,
                       UserWarning)
         return None
-    D = pd.concat([D_ for D_ in D if len(D_) > 0], ignore_index=True)
     if bins:
         # Reduce data spatially.
         _, bins = np.histogram(D['R'], bins=bins)
