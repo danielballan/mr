@@ -73,6 +73,13 @@ setup_parameters = dict(
     packages = ['mr', 'mr.video', 'mr.wire', 'customized_trackpy'],
     long_description = read('README.md'),
     ext_modules = [Extension('_Cfilters', ['mr/src/Cfilters.c'])],
+    install_requires = ['numpy', 'scipy', 'pandas', 'matplotlib',
+                        'trackpy', 'yaml_serialize', 'pims'],
+    dependency_links = [
+        'https://api.github.com/repos/soft-matter/trackpy/tarball#egg=trackpy',
+        'https://api.github.com/repos/soft-matter/yaml-serialize/tarball#' +
+            'egg=yaml_serialize',
+        'https://api.github.com/repos/soft-matter/pims/tarball#egg=pims'],
     package_dir = {'mr': 'mr'},
     package_data = {'mr': ['doc/*', 'db_schema.sql']},
 )
