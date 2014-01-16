@@ -170,10 +170,20 @@ def annotate(centroids, image, circle_size=170, invert=False, ax=None):
         ax.imshow(1-image, origin='upper', shape=image.shape, cmap=plt.cm.gray)
     else:
         ax.imshow(image, origin='upper', shape=image.shape, cmap=plt.cm.gray)
-    ax.set_xlim(0, image.shape[1])
-    ax.set_ylim(0, image.shape[0])
-    ax.scatter(centroids['x'], centroids['y'], 
-               s=circle_size, facecolors='none', edgecolors='g')
+    scatter = ax.scatter(centroids['x'], centroids['y'], 
+                         s=circle_size, edgecolors='g',
+                         facecolors='none', linewidths=2)
+    
+    # If mpld3 is available, add Tooltips identifying each probe.
+    try:
+        import mpld3.plugins
+    except ImportError:
+        pass
+    else:
+        if 'probe' in centroids:
+            labels = map(str, centroids['probe'])
+            tips = [mpld3.plugins.PointLabelTooltip(scatter, labels)]
+            ax.figure.plugins = tips
     return ax
 
 @make_axes
